@@ -231,7 +231,7 @@ class MainActivity : AppCompatActivity() {
                             
                             Toast.makeText(
                                 this@MainActivity,
-                                "فایل سیو در Downloads ذخیره شد: $fileName",
+                                "فایل در Downloads ذخیره شد: $fileName",
                                 Toast.LENGTH_LONG
                             ).show()
                         } catch (e: Exception) {
