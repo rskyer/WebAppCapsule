@@ -10,7 +10,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "monster.kawa.webappcapsule"
+        applicationId = "ir.steven750mc.mumarope"
         minSdk = 24
         targetSdk = 36
         versionCode = 1
