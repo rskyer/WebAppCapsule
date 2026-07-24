@@ -1,12 +1,15 @@
 package monster.kawa.webappcapsule
 
 import android.annotation.SuppressLint
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.media.MediaScannerConnection
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.provider.MediaStore
 import android.util.Base64
 import android.view.KeyEvent
 import android.webkit.CookieManager
@@ -28,6 +31,7 @@ import androidx.webkit.WebViewAssetLoader
 import monster.kawa.webappcapsule.databinding.ActivityMainBinding
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -43,7 +47,6 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // ثبت launcher برای انتخاب فایل
         fileChooserLauncher = registerForActivityResult(
             ActivityResultContracts.StartActivityForResult()
         ) { result ->
@@ -72,7 +75,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Immersive mode
         WindowInsetsControllerCompat(window, window.decorView).apply {
             hide(WindowInsetsCompat.Type.systemBars())
             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
@@ -178,17 +180,11 @@ class MainActivity : AppCompatActivity() {
                         try {
                             val base64 = base64Data.substring(base64Data.indexOf(",") + 1)
                             val bytes = Base64.decode(base64, Base64.DEFAULT)
-
                             val fileName = guessFileNameFromDisposition(contentDisposition, mimeType)
-                            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                            val file = File(downloadsDir, fileName)
-                            FileOutputStream(file).use { it.write(bytes) }
 
-                            MediaScannerConnection.scanFile(
-                                this@MainActivity,
-                                arrayOf(file.absolutePath),
-                                arrayOf(mimeType)
-                            ) { _, _ -> }
+                            bytes.inputStream().use { input ->
+                                saveToDownloads(fileName, mimeType, input)
+                            }
 
                             Toast.makeText(
                                 this@MainActivity,
@@ -210,7 +206,41 @@ class MainActivity : AppCompatActivity() {
         val regex = Regex("filename=\"?([^\";]+)\"?")
         val match = regex.find(contentDisposition)
         return match?.groupValues?.get(1) ?: "save_${System.currentTimeMillis()}.zip"
-        // اگر mimeType نیاز به پسوند مشخص داره می‌تونید اینجا اضافه کنید
+    }
+
+    /**
+     * تابع مرکزی و یکسان برای ذخیره‌ی هر نوع فایل در پوشه‌ی Downloads.
+     * روی Android 10+ (API 29+) از MediaStore استفاده می‌کنه (سازگار با Scoped Storage).
+     * روی نسخه‌های قدیمی‌تر مستقیم توی File می‌نویسه.
+     */
+    private fun saveToDownloads(fileName: String, mimeType: String?, input: InputStream) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val resolver = contentResolver
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                put(MediaStore.Downloads.MIME_TYPE, mimeType ?: "application/octet-stream")
+                put(MediaStore.Downloads.IS_PENDING, 1)
+            }
+
+            val collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI
+            val itemUri = resolver.insert(collection, values)
+                ?: throw Exception("امکان ساخت فایل در Downloads وجود ندارد")
+
+            resolver.openOutputStream(itemUri)?.use { output ->
+                input.copyTo(output, bufferSize = 8 * 1024)
+            } ?: throw Exception("امکان نوشتن در فایل وجود ندارد")
+
+            values.clear()
+            values.put(MediaStore.Downloads.IS_PENDING, 0)
+            resolver.update(itemUri, values, null, null)
+        } else {
+            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val file = File(downloadsDir, fileName)
+            FileOutputStream(file).use { output ->
+                input.copyTo(output, bufferSize = 8 * 1024)
+            }
+            MediaScannerConnection.scanFile(this, arrayOf(file.absolutePath), arrayOf(mimeType)) { _, _ -> }
+        }
     }
 
     private fun downloadFileManually(
@@ -220,6 +250,12 @@ class MainActivity : AppCompatActivity() {
         mimetype: String?
     ) {
         val fileName = URLUtil.guessFileName(url, contentDisposition, mimetype)
+        val uri = Uri.parse(url)
+
+        if (uri.host == "appassets.androidplatform.net") {
+            copyFromAssets(uri, fileName, mimetype)
+            return
+        }
 
         runOnUiThread {
             Toast.makeText(this, "در حال دانلود: $fileName", Toast.LENGTH_SHORT).show()
@@ -232,7 +268,6 @@ class MainActivity : AppCompatActivity() {
                 var currentUrl = url
                 var redirects = 0
 
-                // دنبال کردن ریدایرکت‌ها به‌صورت دستی (چون HttpURLConnection همیشه خودکار انجامش نمی‌ده)
                 while (redirects < 5) {
                     connection = URL(currentUrl).openConnection() as HttpURLConnection
                     connection.instanceFollowRedirects = false
@@ -261,20 +296,9 @@ class MainActivity : AppCompatActivity() {
                     throw Exception("HTTP ${conn.responseCode}")
                 }
 
-                val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                val file = File(downloadsDir, fileName)
-
                 conn.inputStream.use { input ->
-                    FileOutputStream(file).use { output ->
-                        input.copyTo(output, bufferSize = 8 * 1024)
-                    }
+                    saveToDownloads(fileName, mimetype, input)
                 }
-
-                MediaScannerConnection.scanFile(
-                    this,
-                    arrayOf(file.absolutePath),
-                    arrayOf(mimetype)
-                ) { _, _ -> }
 
                 runOnUiThread {
                     Toast.makeText(this, "فایل ذخیره شد: $fileName", Toast.LENGTH_LONG).show()
@@ -285,6 +309,30 @@ class MainActivity : AppCompatActivity() {
                 }
             } finally {
                 connection?.disconnect()
+            }
+        }.start()
+    }
+
+    private fun copyFromAssets(uri: Uri, fileName: String, mimetype: String?) {
+        runOnUiThread {
+            Toast.makeText(this, "در حال آماده‌سازی: $fileName", Toast.LENGTH_SHORT).show()
+        }
+
+        Thread {
+            try {
+                val assetPath = uri.path?.trimStart('/') ?: throw Exception("مسیر فایل نامعتبر است")
+
+                assets.open(assetPath).use { input ->
+                    saveToDownloads(fileName, mimetype, input)
+                }
+
+                runOnUiThread {
+                    Toast.makeText(this, "فایل در Downloads ذخیره شد: $fileName", Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    Toast.makeText(this, "خطا در ذخیره‌سازی: ${e.message}", Toast.LENGTH_LONG).show()
+                }
             }
         }.start()
     }
