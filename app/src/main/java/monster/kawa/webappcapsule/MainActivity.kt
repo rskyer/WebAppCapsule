@@ -1,7 +1,6 @@
 package monster.kawa.webappcapsule
 
 import android.annotation.SuppressLint
-import android.app.DownloadManager
 import android.content.Context
 import android.content.Intent
 import android.media.MediaScannerConnection
@@ -29,6 +28,8 @@ import androidx.webkit.WebViewAssetLoader
 import monster.kawa.webappcapsule.databinding.ActivityMainBinding
 import java.io.File
 import java.io.FileOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
 
 class MainActivity : AppCompatActivity() {
 
@@ -49,10 +50,10 @@ class MainActivity : AppCompatActivity() {
             if (result.resultCode == RESULT_OK) {
                 val data = result.data
                 var results: Array<Uri>? = null
-                
+
                 if (data != null) {
                     val clipData = data.clipData
-                    
+
                     if (clipData != null) {
                         results = Array(clipData.itemCount) { i ->
                             clipData.getItemAt(i).uri
@@ -93,7 +94,6 @@ class MainActivity : AppCompatActivity() {
             }
 
             webChromeClient = object : WebChromeClient() {
-                // مدیریت انتخاب فایل برای Upload
                 override fun onShowFileChooser(
                     webView: WebView?,
                     filePathCallback: ValueCallback<Array<Uri>>?,
@@ -130,25 +130,6 @@ class MainActivity : AppCompatActivity() {
                     val url = request.url.toString()
 
                     return when {
-                        url.startsWith("intent://") -> {
-                            try {
-                                val intent = Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
-                                if (packageManager.resolveActivity(intent, 0) != null) {
-                                    startActivity(intent)
-                                } else {
-                                    val fallbackUrl = intent.getStringExtra("browser_fallback_url")
-                                    if (fallbackUrl != null) {
-                                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(fallbackUrl)))
-                                    } else {
-                                        Toast.makeText(this@MainActivity, "اپی برای باز کردن این لینک یافت نشد", Toast.LENGTH_SHORT).show()
-                                    }
-                                }
-                            } catch (e: Exception) {
-                                Toast.makeText(this@MainActivity, "خطا در باز کردن لینک: ${e.message}", Toast.LENGTH_SHORT).show()
-                            }
-                            true
-                        }
-
                         request.url.host == "appassets.androidplatform.net" -> false
 
                         else -> {
@@ -168,41 +149,25 @@ class MainActivity : AppCompatActivity() {
             }
 
             setDownloadListener(DownloadListener { url, userAgent, contentDisposition, mimetype, _ ->
-                try {
-                    if (url.startsWith("blob:")) {
-                        val js = """
-                            var xhr = new XMLHttpRequest();
-                            xhr.open('GET', '$url', true);
-                            xhr.responseType = 'blob';
-                            xhr.onload = function() {
-                                var reader = new FileReader();
-                                reader.readAsDataURL(xhr.response);
-                                reader.onloadend = function() {
-                                    Android.saveBlob(reader.result, '$mimetype', '${contentDisposition ?: ""}');
-                                };
+                if (url.startsWith("blob:")) {
+                    val js = """
+                        var xhr = new XMLHttpRequest();
+                        xhr.open('GET', '$url', true);
+                        xhr.responseType = 'blob';
+                        xhr.onload = function() {
+                            var reader = new FileReader();
+                            reader.readAsDataURL(xhr.response);
+                            reader.onloadend = function() {
+                                Android.saveBlob(reader.result, '$mimetype', '${contentDisposition ?: ""}');
                             };
-                            xhr.send();
-                        """.trimIndent()
-                        
-                        evaluateJavascript(js, null)
-                        Toast.makeText(this@MainActivity, "در حال آماده‌سازی فایل سیو...", Toast.LENGTH_SHORT).show()
-                        return@DownloadListener
-                    }
+                        };
+                        xhr.send();
+                    """.trimIndent()
 
-                    val request = DownloadManager.Request(Uri.parse(url))
-                    request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                    val fileName = URLUtil.guessFileName(url, contentDisposition, mimetype)
-                    request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
-                    val cookies = CookieManager.getInstance().getCookie(url)
-                    request.addRequestHeader("cookie", cookies)
-                    request.addRequestHeader("User-Agent", userAgent)
-                    request.setMimeType(mimetype)
-
-                    val downloadManager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-                    downloadManager.enqueue(request)
-                    Toast.makeText(this@MainActivity, "Downloading $fileName", Toast.LENGTH_SHORT).show()
-                } catch (e: Exception) {
-                    Toast.makeText(this@MainActivity, "Download failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                    evaluateJavascript(js, null)
+                    Toast.makeText(this@MainActivity, "در حال آماده‌سازی فایل...", Toast.LENGTH_SHORT).show()
+                } else {
+                    downloadFileManually(url, userAgent, contentDisposition, mimetype)
                 }
             })
 
@@ -213,22 +178,18 @@ class MainActivity : AppCompatActivity() {
                         try {
                             val base64 = base64Data.substring(base64Data.indexOf(",") + 1)
                             val bytes = Base64.decode(base64, Base64.DEFAULT)
-                            
-                            // ذخیره مستقیم در پوشه Downloads
-                            val fileName = "save_${System.currentTimeMillis()}.zip"
+
+                            val fileName = guessFileNameFromDisposition(contentDisposition, mimeType)
                             val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
                             val file = File(downloadsDir, fileName)
                             FileOutputStream(file).use { it.write(bytes) }
-                            
-                            // اسکن فایل برای نمایش در فایل منیجر
+
                             MediaScannerConnection.scanFile(
                                 this@MainActivity,
                                 arrayOf(file.absolutePath),
                                 arrayOf(mimeType)
-                            ) { path, uri ->
-                                // فایل اسکن شد
-                            }
-                            
+                            ) { _, _ -> }
+
                             Toast.makeText(
                                 this@MainActivity,
                                 "فایل در Downloads ذخیره شد: $fileName",
@@ -243,6 +204,89 @@ class MainActivity : AppCompatActivity() {
 
             loadUrl("https://appassets.androidplatform.net/index.html")
         }
+    }
+
+    private fun guessFileNameFromDisposition(contentDisposition: String, mimeType: String): String {
+        val regex = Regex("filename=\"?([^\";]+)\"?")
+        val match = regex.find(contentDisposition)
+        return match?.groupValues?.get(1) ?: "save_${System.currentTimeMillis()}.zip"
+        // اگر mimeType نیاز به پسوند مشخص داره می‌تونید اینجا اضافه کنید
+    }
+
+    private fun downloadFileManually(
+        url: String,
+        userAgent: String,
+        contentDisposition: String?,
+        mimetype: String?
+    ) {
+        val fileName = URLUtil.guessFileName(url, contentDisposition, mimetype)
+
+        runOnUiThread {
+            Toast.makeText(this, "در حال دانلود: $fileName", Toast.LENGTH_SHORT).show()
+        }
+
+        Thread {
+            var connection: HttpURLConnection? = null
+            try {
+                val cookies = CookieManager.getInstance().getCookie(url)
+                var currentUrl = url
+                var redirects = 0
+
+                // دنبال کردن ریدایرکت‌ها به‌صورت دستی (چون HttpURLConnection همیشه خودکار انجامش نمی‌ده)
+                while (redirects < 5) {
+                    connection = URL(currentUrl).openConnection() as HttpURLConnection
+                    connection.instanceFollowRedirects = false
+                    connection.requestMethod = "GET"
+                    connection.setRequestProperty("User-Agent", userAgent)
+                    if (!cookies.isNullOrEmpty()) {
+                        connection.setRequestProperty("Cookie", cookies)
+                    }
+                    connection.connectTimeout = 15000
+                    connection.readTimeout = 30000
+                    connection.connect()
+
+                    val code = connection.responseCode
+                    if (code in 300..399) {
+                        val location = connection.getHeaderField("Location") ?: break
+                        currentUrl = location
+                        connection.disconnect()
+                        redirects++
+                        continue
+                    }
+                    break
+                }
+
+                val conn = connection ?: throw Exception("اتصال برقرار نشد")
+                if (conn.responseCode != HttpURLConnection.HTTP_OK) {
+                    throw Exception("HTTP ${conn.responseCode}")
+                }
+
+                val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                val file = File(downloadsDir, fileName)
+
+                conn.inputStream.use { input ->
+                    FileOutputStream(file).use { output ->
+                        input.copyTo(output, bufferSize = 8 * 1024)
+                    }
+                }
+
+                MediaScannerConnection.scanFile(
+                    this,
+                    arrayOf(file.absolutePath),
+                    arrayOf(mimetype)
+                ) { _, _ -> }
+
+                runOnUiThread {
+                    Toast.makeText(this, "فایل ذخیره شد: $fileName", Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    Toast.makeText(this, "دانلود ناموفق: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            } finally {
+                connection?.disconnect()
+            }
+        }.start()
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
