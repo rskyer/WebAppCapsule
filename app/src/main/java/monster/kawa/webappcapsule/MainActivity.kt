@@ -186,10 +186,19 @@ class MainActivity : AppCompatActivity() {
                         try {
                             val base64 = base64Data.substring(base64Data.indexOf(",") + 1)
                             val bytes = Base64.decode(base64, Base64.DEFAULT)
-                            val fileName = guessFileNameFromDisposition(contentDisposition, mimeType)
+
+                            // به‌جای اعتماد کامل به mimeType (که برای بعضی فایل‌ها نادرست می‌رسه)،
+                            // نوع واقعی فایل رو از روی magic bytes خودش تشخیص می‌دیم.
+                            val detectedType = detectMimeTypeFromMagicBytes(bytes)
+                            val effectiveMimeType = detectedType ?: mimeType
+
+                            var fileName = guessFileNameFromDisposition(contentDisposition, effectiveMimeType)
+                            if (detectedType != null) {
+                                fileName = fixExtensionForDetectedType(fileName, detectedType)
+                            }
 
                             bytes.inputStream().use { input ->
-                                saveToDownloads(fileName, mimeType, input)
+                                saveToDownloads(fileName, effectiveMimeType, input)
                             }
 
                             Toast.makeText(
@@ -227,6 +236,57 @@ class MainActivity : AppCompatActivity() {
         if (mimeType.isBlank() || mimeType == "application/octet-stream") return ""
         val guessed = MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType)
         return if (guessed != null) ".$guessed" else ""
+    }
+
+    /**
+     * تشخیص نوع واقعی فایل از روی چند بایت اول (magic bytes/file signature).
+     * چون mimeType و blob.type که از WebView/JS می‌رسن قابل‌اعتماد نیستن،
+     * این روش قطعی‌ترین راه برای تشخیص PNG (اسکرین‌شات) در برابر ZIP (فایل سیو) است.
+     * برای انواع دیگه (که تشخیص داده نشن) null برمی‌گردونه و رفتار قبلی حفظ می‌شه.
+     */
+    private fun detectMimeTypeFromMagicBytes(bytes: ByteArray): String? {
+        if (bytes.size < 8) return null
+
+        // PNG: 89 50 4E 47 0D 0A 1A 0A
+        val pngSignature = byteArrayOf(
+            0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A
+        )
+        if (bytes.copyOfRange(0, 8).contentEquals(pngSignature)) {
+            return "image/png"
+        }
+
+        // JPEG: FF D8 FF
+        if (bytes.size >= 3 &&
+            bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte() && bytes[2] == 0xFF.toByte()
+        ) {
+            return "image/jpeg"
+        }
+
+        // ZIP (و فرمت‌های مبتنی بر ZIP): 50 4B 03 04 یا 50 4B 05 06 (خالی) یا 50 4B 07 08
+        if (bytes.size >= 4 &&
+            bytes[0] == 0x50.toByte() && bytes[1] == 0x4B.toByte() &&
+            (bytes[2] == 0x03.toByte() || bytes[2] == 0x05.toByte() || bytes[2] == 0x07.toByte())
+        ) {
+            return "application/zip"
+        }
+
+        return null
+    }
+
+    /**
+     * پسوند فایل رو با توجه به نوع تشخیص‌داده‌شده از magic bytes اصلاح می‌کنه.
+     * مثلا save_123.zip.txt -> save_123.png وقتی محتوا واقعا PNG باشه.
+     */
+    private fun fixExtensionForDetectedType(fileName: String, detectedType: String): String {
+        val correctExtension = extensionFromMimeType(detectedType)
+        if (correctExtension.isEmpty()) return fileName
+
+        // اگر اسم فایل از قبل با پسوند درست تموم می‌شه، دست‌نخورده برش می‌گردونیم
+        if (fileName.endsWith(correctExtension, ignoreCase = true)) return fileName
+
+        // نام پایه رو با حذف تمام پسوندهای شناخته‌شده‌ی اشتباه می‌سازیم
+        val baseName = fileName.substringBeforeLast('.', fileName)
+        return "$baseName$correctExtension"
     }
 
     /**
