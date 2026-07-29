@@ -14,6 +14,7 @@ import android.util.Base64
 import android.view.KeyEvent
 import android.webkit.CookieManager
 import android.webkit.DownloadListener
+import android.webkit.MimeTypeMap
 import android.webkit.URLUtil
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -152,15 +153,20 @@ class MainActivity : AppCompatActivity() {
 
             setDownloadListener(DownloadListener { url, userAgent, contentDisposition, mimetype, _ ->
                 if (url.startsWith("blob:")) {
+                    // نکته مهم: mimetype و contentDisposition که خود WebView برای blob می‌ده
+                    // اغلب نادرست/خالی است (مثلا text/plain به‌جای image/png).
+                    // برای همین نوع واقعی رو مستقیم از خود blob.type می‌خونیم.
                     val js = """
                         var xhr = new XMLHttpRequest();
                         xhr.open('GET', '$url', true);
                         xhr.responseType = 'blob';
                         xhr.onload = function() {
+                            var blob = xhr.response;
+                            var realType = blob.type && blob.type.length > 0 ? blob.type : '$mimetype';
                             var reader = new FileReader();
-                            reader.readAsDataURL(xhr.response);
+                            reader.readAsDataURL(blob);
                             reader.onloadend = function() {
-                                Android.saveBlob(reader.result, '$mimetype', '${contentDisposition ?: ""}');
+                                Android.saveBlob(reader.result, realType, '${contentDisposition ?: ""}');
                             };
                         };
                         xhr.send();
@@ -202,10 +208,25 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * اسم فایل رو یا از هدر Content-Disposition استخراج می‌کنه،
+     * یا در نبود اون، بر اساس mimeType واقعی یک اسم و پسوند درست می‌سازه
+     * (به‌جای پیش‌فرض هاردکد شده‌ی .zip که باعث خرابی پسوند می‌شد).
+     */
     private fun guessFileNameFromDisposition(contentDisposition: String, mimeType: String): String {
-        val regex = Regex("filename=\"?([^\";]+)\"?")
+        val regex = Regex("filename\\*?=(?:UTF-8'')?\"?([^\";]+)\"?")
         val match = regex.find(contentDisposition)
-        return match?.groupValues?.get(1) ?: "save_${System.currentTimeMillis()}.zip"
+        if (match != null) {
+            return match.groupValues[1].trim()
+        }
+        val extension = extensionFromMimeType(mimeType)
+        return "file_${System.currentTimeMillis()}$extension"
+    }
+
+    private fun extensionFromMimeType(mimeType: String): String {
+        if (mimeType.isBlank() || mimeType == "application/octet-stream") return ""
+        val guessed = MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType)
+        return if (guessed != null) ".$guessed" else ""
     }
 
     /**
