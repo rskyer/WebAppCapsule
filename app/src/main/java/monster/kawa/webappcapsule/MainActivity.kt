@@ -60,6 +60,14 @@ class MainActivity : AppCompatActivity() {
 
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
+        // Remote debugging: connect the phone via USB, enable USB debugging
+        // in Developer Options, then open chrome://inspect on a PC with
+        // Chrome. This app's WebView will show up there with a real
+        // Console + Network tab - the only reliable way to see what's
+        // actually happening with sw.js registration and script loads
+        // inside THIS app (as opposed to some other local server/tab).
+        WebView.setWebContentsDebuggingEnabled(true)
+
         fileChooserLauncher = registerForActivityResult(
             ActivityResultContracts.StartActivityForResult()
         ) { result ->
@@ -294,8 +302,67 @@ class MainActivity : AppCompatActivity() {
             try { Android.reportImportError(String(msg)); } catch (e) {}
           }
 
+          function ss(key) {
+            try { return sessionStorage.getItem(key); } catch (e) { return null; }
+          }
+          function ssSet(key, val) {
+            try { sessionStorage.setItem(key, val); } catch (e) {}
+          }
+          function ssRemove(key) {
+            try { sessionStorage.removeItem(key); } catch (e) {}
+          }
+
+          // Waits for the Play button to appear AND the Service Worker to
+          // actually be controlling this page before clicking it. If the
+          // button shows up before the SW has taken control (a real race:
+          // storeFiles() can finish and reveal #btn-play before the SW's
+          // controllerchange fires), clicking immediately leads straight to
+          // index.html trying to load js/*.js with no SW to serve them from
+          // IndexedDB -> "Failed to load script" boot crash.
+          //
+          // Fix: if we see the button but no controller yet, reload once
+          // (same recovery pattern the loader itself uses elsewhere) and
+          // keep waiting after the reload lands. Guarded by sessionStorage
+          // so we never reload more than once per import attempt.
+          function waitAndClickPlay() {
+            var reloadedForControl = ss('twal_reload_for_control') === '1';
+            var tries = 0;
+            var maxTries = 1200; // ~10 minutes at 500ms, generous for big installs
+            var poll = setInterval(function() {
+              tries++;
+              var playBtn = document.getElementById('btn-play');
+              var visible = playBtn && playBtn.offsetParent !== null;
+              var controlled = !!(navigator.serviceWorker && navigator.serviceWorker.controller);
+
+              if (visible && controlled) {
+                clearInterval(poll);
+                ssRemove('twal_reload_for_control');
+                ssRemove('twal_import_started');
+                try { Android.markImported(); } catch (e) {}
+                playBtn.click();
+              } else if (visible && !controlled && !reloadedForControl) {
+                clearInterval(poll);
+                ssSet('twal_reload_for_control', '1');
+                location.reload();
+              } else if (tries >= maxTries) {
+                clearInterval(poll);
+                fail('timed out waiting for import / service worker control');
+              }
+            }, 500);
+          }
+
           async function run() {
             try {
+              // If we already dispatched the import on a previous load of
+              // this same page (before a self-reload for SW control),
+              // don't redo the fetch/File/dispatch dance - just resume
+              // waiting for Play + control.
+              if (ss('twal_import_started') === '1') {
+                waitAndClickPlay();
+                return;
+              }
+              ssSet('twal_import_started', '1');
+
               var manifestResp = await fetch('gamefiles-manifest.json', { cache: 'no-store' });
               if (!manifestResp.ok) throw new Error('manifest fetch failed: ' + manifestResp.status);
               var paths = await manifestResp.json();
@@ -321,22 +388,7 @@ class MainActivity : AppCompatActivity() {
               input.files = dt.files;
               input.dispatchEvent(new Event('change', { bubbles: true }));
 
-              // Poll for the Play button to appear (import finished + validated).
-              var tries = 0;
-              var maxTries = 1200; // ~10 minutes at 500ms, generous for big installs
-              var poll = setInterval(function() {
-                tries++;
-                var playBtn = document.getElementById('btn-play');
-                var visible = playBtn && playBtn.offsetParent !== null;
-                if (visible) {
-                  clearInterval(poll);
-                  try { Android.markImported(); } catch (e) {}
-                  playBtn.click();
-                } else if (tries >= maxTries) {
-                  clearInterval(poll);
-                  fail('timed out waiting for import to finish');
-                }
-              }, 500);
+              waitAndClickPlay();
             } catch (err) {
               fail(err && err.message ? err.message : String(err));
             }
