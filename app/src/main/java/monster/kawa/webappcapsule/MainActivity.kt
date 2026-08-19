@@ -29,7 +29,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.webkit.ServiceWorkerClientCompat
+import androidx.webkit.ServiceWorkerControllerCompat
 import androidx.webkit.WebViewAssetLoader
+import androidx.webkit.WebViewFeature
 import monster.kawa.webappcapsule.databinding.ActivityMainBinding
 import java.io.File
 import java.io.FileOutputStream
@@ -105,6 +108,34 @@ class MainActivity : AppCompatActivity() {
             .setDomain("appassets.androidplatform.net")
             .addPathHandler("/", WebViewAssetLoader.AssetsPathHandler(this))
             .build()
+
+        // CRITICAL: requests made by the Service Worker itself (fetching
+        // sw.js to register/update it, and any fetch() inside the SW's own
+        // fetch handler) do NOT go through WebViewClient.shouldInterceptRequest.
+        // They go through a separate pipe. Without wiring the same
+        // assetLoader in here too, sw.js registration fails with a generic
+        // "unknown error occurred when fetching the script" - which is
+        // exactly what was happening. This is what actually fixes it.
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_BASIC_USAGE) &&
+            WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_SHOULD_INTERCEPT_REQUEST)
+        ) {
+            val swController = ServiceWorkerControllerCompat.getInstance()
+            swController.setServiceWorkerClient(object : ServiceWorkerClientCompat() {
+                override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse? {
+                    return if (request.url.host == "appassets.androidplatform.net") {
+                        assetLoader.shouldInterceptRequest(request.url)
+                    } else {
+                        null
+                    }
+                }
+            })
+        } else {
+            Toast.makeText(
+                this,
+                "این نسخه‌ی WebView از Service Worker پشتیبانی کامل نمی‌کنه؛ ممکنه بازی بالا نیاد",
+                Toast.LENGTH_LONG
+            ).show()
+        }
 
         // First run (or if a previous import never finished): start at
         // loader.html so the auto-import script can run. Once the game is
