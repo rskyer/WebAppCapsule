@@ -48,7 +48,7 @@ jobs:
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
           restore-keys: ${{ runner.os }}-gradle-
 
-      - name: Build Debug APK
+      - name: Build Debug APK ReTry
         run: ./gradlew assembleDebug --stacktrace
 
       - name: Upload Debug APK
