@@ -1,316 +1,44 @@
 <!DOCTYPE html>
-<html lang="fa" dir="rtl">
+
+<html lang="en" dir="ltr">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>اسکای ایریا - بارگذاری</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        html, body {
-            width: 100%;
-            height: 100%;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: #f5f7fa;
-        }
-        
-        .main-wrapper {
-            width: 100%;
-            height: 100vh;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .loader-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: white;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            z-index: 9999;
-            transition: opacity 0.5s ease, visibility 0.5s ease;
-        }
-        .loader-overlay.hidden {
-            opacity: 0;
-            visibility: hidden;
-            pointer-events: none;
-        }
-
-        .spinner {
-            width: 70px;
-            height: 70px;
-            border: 6px solid #e0e7ff;
-            border-top: 6px solid #2563eb;
-            border-radius: 50%;
-            animation: spin 0.9s cubic-bezier(0.5, 0, 0.5, 1) infinite;
-            margin-bottom: 1.8rem;
-            box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
-        }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-
-        .status-text {
-            font-size: 1.3rem;
-            font-weight: 500;
-            color: #1e293b;
-            margin-bottom: 0.5rem;
-        }
-        .sub-text {
-            font-size: 0.95rem;
-            color: #64748b;
-        }
-
-        .offline-icon {
-            font-size: 4rem;
-            line-height: 1;
-            margin-bottom: 0.8rem;
-            display: block;
-        }
-        .offline-title {
-            font-size: 1.5rem;
-            font-weight: 600;
-            color: #0f172a;
-            margin-bottom: 0.4rem;
-        }
-        .offline-desc {
-            font-size: 1rem;
-            color: #475569;
-            background: #f1f5f9;
-            padding: 0.6rem 1.8rem;
-            border-radius: 40px;
-            margin-top: 0.5rem;
-        }
-        .retry-btn {
-            margin-top: 1.5rem;
-            background: #2563eb;
-            color: white;
-            border: none;
-            padding: 0.7rem 2.5rem;
-            border-radius: 60px;
-            font-size: 1rem;
-            font-weight: 500;
-            cursor: pointer;
-            transition: background 0.2s, transform 0.1s;
-            box-shadow: 0 4px 8px rgba(37, 99, 235, 0.2);
-        }
-        .retry-btn:hover {
-            background: #1d4ed8;
-        }
-        .retry-btn:active {
-            transform: scale(0.96);
-        }
-
-        .hidden {
-            display: none !important;
-        }
-
-        .iframe-container {
-            width: 100%;
-            height: 100vh;
-            display: none;
-        }
-        .iframe-container.active {
-            display: block;
-        }
-
-        .iframe-container iframe {
-            width: 100%;
-            height: 100%;
-            border: none;
-            display: block;
-        }
-
-        @media (max-width: 600px) {
-            .spinner {
-                width: 60px;
-                height: 60px;
-                border-width: 5px;
-            }
-            .status-text {
-                font-size: 1.1rem;
-            }
-        }
-    </style>
+  <meta http-equiv="CONTENT-TYPE" content="text/html; charset=UTF-8">
+  <link rel="stylesheet" href="styles/style.css"/>
+  <title>Calculator v1</title>
 </head>
 <body>
-
-    <div class="main-wrapper">
-        <!-- iframe برای نمایش سایت -->
-        <div class="iframe-container" id="iframeContainer">
-            <iframe 
-                id="mainFrame"
-                src="https://games.skyarea.ir" 
-                sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-orientation-lock"
-                allow="accelerometer; camera; encrypted-media; geolocation; gyroscope; microphone; autoplay; fullscreen"
-                loading="eager"
-            ></iframe>
-        </div>
-
-        <!-- لودر وسط صفحه -->
-        <div class="loader-overlay" id="loaderOverlay">
-            <div id="spinnerWrapper">
-                <div class="spinner"></div>
-                <div class="status-text" id="statusText">بارگذاری میوعی...</div>
-                <div class="sub-text" id="subText">لطفاً منتظر بمانید</div>
-            </div>
-
-            <div id="offlineWrapper" class="hidden" style="display: none; flex-direction: column; align-items: center; width: 100%;">
-                <span class="offline-icon">📡</span>
-                <div class="offline-title">اتصال برقرار نیست</div>
-                <div class="offline-desc">لطفاً اینترنت خودتون رو بررسی کنید</div>
-                <button class="retry-btn" id="retryBtn">تلاش مجدد</button>
-            </div>
-        </div>
-    </div>
-
-    <script>
-        (function() {
-            const loaderOverlay = document.getElementById('loaderOverlay');
-            const iframeContainer = document.getElementById('iframeContainer');
-            const spinnerWrapper = document.getElementById('spinnerWrapper');
-            const offlineWrapper = document.getElementById('offlineWrapper');
-            const statusText = document.getElementById('statusText');
-            const subText = document.getElementById('subText');
-            const retryBtn = document.getElementById('retryBtn');
-            const mainFrame = document.getElementById('mainFrame');
-
-            const TARGET_URL = 'https://games.skyarea.ir';
-
-            function showOffline() {
-                spinnerWrapper.classList.add('hidden');
-                spinnerWrapper.style.display = 'none';
-                offlineWrapper.classList.remove('hidden');
-                offlineWrapper.style.display = 'flex';
-                statusText.textContent = 'عدم دسترسی';
-                subText.textContent = 'اتصال اینترنت را بررسی کنید';
-            }
-
-            function showLoading() {
-                spinnerWrapper.classList.remove('hidden');
-                spinnerWrapper.style.display = 'block';
-                offlineWrapper.classList.add('hidden');
-                offlineWrapper.style.display = 'none';
-                statusText.textContent = 'بارگذاری میوعی...';
-                subText.textContent = 'لطفاً منتظر بمانید';
-                loaderOverlay.classList.remove('hidden');
-                iframeContainer.classList.remove('active');
-            }
-
-            function showContent() {
-                loaderOverlay.classList.add('hidden');
-                iframeContainer.classList.add('active');
-                mainFrame.src = TARGET_URL;
-            }
-
-            function checkInternetWithImage() {
-                return new Promise((resolve) => {
-                    const img = new Image();
-                    const timeout = setTimeout(() => {
-                        img.src = '';
-                        resolve(false);
-                    }, 5000);
-
-                    img.onload = function() {
-                        clearTimeout(timeout);
-                        resolve(true);
-                    };
-                    img.onerror = function() {
-                        clearTimeout(timeout);
-                        resolve(false);
-                    };
-                    img.src = 'https://www.google.com/favicon.ico?_=' + Date.now();
-                });
-            }
-
-            async function checkInternet() {
-                if (!navigator.onLine) {
-                    return false;
-                }
-                const result = await checkInternetWithImage();
-                return result;
-            }
-
-            let isChecking = false;
-
-            async function checkInternetAndLoad() {
-                if (isChecking) return;
-                isChecking = true;
-
-                showLoading();
-                
-                const hasInternet = await checkInternet();
-                
-                if (hasInternet) {
-                    console.log('✅ اینترنت متصل است - بارگذاری صفحه');
-                    showContent();
-                } else {
-                    console.log('❌ اینترنت قطع است');
-                    showOffline();
-                }
-                
-                isChecking = false;
-            }
-
-            async function retryConnection() {
-                if (isChecking) return;
-                showLoading();
-                
-                const hasInternet = await checkInternet();
-                
-                if (hasInternet) {
-                    showContent();
-                } else {
-                    showOffline();
-                }
-            }
-
-            window.addEventListener('load', function() {
-                setTimeout(checkInternetAndLoad, 300);
-            });
-
-            retryBtn.addEventListener('click', retryConnection);
-
-            window.addEventListener('online', function() {
-                if (!loaderOverlay.classList.contains('hidden')) {
-                    checkInternetAndLoad();
-                } else {
-                    checkInternet().then(result => {
-                        if (!result) {
-                            loaderOverlay.classList.remove('hidden');
-                            iframeContainer.classList.remove('active');
-                            showOffline();
-                        }
-                    });
-                }
-            });
-
-            window.addEventListener('offline', function() {
-                if (iframeContainer.classList.contains('active')) {
-                    loaderOverlay.classList.remove('hidden');
-                    iframeContainer.classList.remove('active');
-                    showOffline();
-                }
-            });
-
-            mainFrame.addEventListener('error', function() {
-                console.warn('⚠️ iframe error');
-                if (!loaderOverlay.classList.contains('hidden')) {
-                    checkInternetAndLoad();
-                }
-            });
-
-        })();
-    </script>
-
+  <h1 id="show" dir="ltr">
+    0
+  </h1>
+    <button class="btn-rLast" id="removeLast" onclick="removeLast()">⌫</button>
+  <br><hr>
+  <br><br><br>
+  
+    <button class="btn-light" id="C" onclick="remove()">C</button>
+    <button class="btn-light" id="addAdd" onclick="addAdd()">()</button>
+    <button class="btn-light" id="addTaghL" onclick="addTaghL()">%</button>
+    <button class="btn-light" id="addTagh" onclick="addTagh()">÷</button>
+  <br>
+  <button class="btn" id="one" onclick="clickedOne()">1</button>
+  <button class="btn" id="two" onclick="clickedTwo()">2</button>
+  <button class="btn" id="three" onclick="clickedThree()">3</button>
+    <button class="btn-light" id="addZarb" onclick="addZarb()">×</button>
+  <br>
+    <button class="btn" id="four" onclick="clickedFour()">4</button>
+    <button class="btn" id="five" onclick="clickedFive()">5</button>
+    <button class="btn" id="six" onclick="clickedSix()">6</button>
+    <button class="btn-light" id="addNeg" onclick="addNeg()">-</button>
+  <br>
+    <button class="btn" id="seven" onclick="clickedSeven()">7</button>
+    <button class="btn" id="eight" onclick="clickedEight()">8</button>
+    <button class="btn" id="nine" onclick="clickedNine()">9</button>
+    <button class="btn-light" id="addPlus" onclick="addPlus()">+</button>
+  <br>
+        <button class="btn" id="addDot" onclick="addDot()">.</button>
+        <button class="btn" id="zero" onclick="clickedZero()">0</button>
+        <button class="btn-light" id="addPower" onclick="addPower()">*</button>
+        <button class="btn-light" id="getMachine" onclick="pus()">=</button>
+  
+  <script src="scripts/machine.js"></script>
 </body>
 </html>
