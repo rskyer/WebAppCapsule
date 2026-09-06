@@ -3,37 +3,47 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>بارگذاری اسکای ایریا</title>
+    <title>اسکای ایریا - بارگذاری</title>
     <style>
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
-        body {
+        html, body {
+            width: 100%;
+            height: 100%;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background: #f5f7fa;
-            min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            margin: 0;
         }
-        .loader-container {
+        
+        .main-wrapper {
+            width: 100%;
+            height: 100vh;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .loader-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: white;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            padding: 2rem;
-            background: white;
-            border-radius: 32px;
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.08);
-            transition: all 0.3s ease;
-            width: 90%;
-            max-width: 480px;
-            min-height: 300px;
+            z-index: 9999;
+            transition: opacity 0.5s ease, visibility 0.5s ease;
         }
-        /* اسپینر آبی */
+        .loader-overlay.hidden {
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+        }
+
         .spinner {
             width: 70px;
             height: 70px;
@@ -42,28 +52,26 @@
             border-radius: 50%;
             animation: spin 0.9s cubic-bezier(0.5, 0, 0.5, 1) infinite;
             margin-bottom: 1.8rem;
-            transition: border-color 0.2s;
             box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
         }
         @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+
         .status-text {
             font-size: 1.3rem;
             font-weight: 500;
             color: #1e293b;
-            letter-spacing: 0.3px;
             margin-bottom: 0.5rem;
         }
         .sub-text {
             font-size: 0.95rem;
             color: #64748b;
-            margin-top: 0.2rem;
         }
-        /* حالت آفلاین / خطا */
+
         .offline-icon {
-            font-size: 3.8rem;
+            font-size: 4rem;
             line-height: 1;
             margin-bottom: 0.8rem;
             display: block;
@@ -101,36 +109,28 @@
         .retry-btn:active {
             transform: scale(0.96);
         }
+
         .hidden {
             display: none !important;
         }
-        /* iframe / محتوای اصلی */
-        .content-frame {
+
+        .iframe-container {
             width: 100%;
-            height: 80vh;
-            min-height: 500px;
-            border: none;
-            border-radius: 24px;
-            box-shadow: 0 8px 30px rgba(0,0,0,0.05);
-            background: white;
-            display: block;
-        }
-        .iframe-wrapper {
-            width: 100%;
-            display: none; /* مخفی تا وقتی لود بشه */
-        }
-        .iframe-wrapper.active {
-            display: block;
-        }
-        .loader-container.hide-loader {
+            height: 100vh;
             display: none;
         }
-        /* ریسپانسیو */
+        .iframe-container.active {
+            display: block;
+        }
+
+        .iframe-container iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+            display: block;
+        }
+
         @media (max-width: 600px) {
-            .loader-container {
-                padding: 1.5rem;
-                min-height: 250px;
-            }
             .spinner {
                 width: 60px;
                 height: 60px;
@@ -144,43 +144,39 @@
 </head>
 <body>
 
-    <!-- محتوای اصلی (iframe) که بعد از چک اینترنت نمایش داده میشه -->
-    <div class="iframe-wrapper" id="iframeWrapper">
-        <iframe 
-            id="mainFrame"
-            class="content-frame" 
-            src="https://app.games.skyarea.ir" 
-            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
-            allow="accelerometer; camera; encrypted-media; geolocation; gyroscope; microphone; autoplay; fullscreen"
-            loading="lazy"
-        ></iframe>
-    </div>
-
-    <!-- کانتینر اسپینر + وضعیت -->
-    <div class="loader-container" id="loaderContainer">
-        <!-- اسپینر آبی (پیش‌فرض) -->
-        <div id="spinnerWrapper">
-            <div class="spinner" id="spinnerElement"></div>
-            <div class="status-text" id="statusText">بارگذاری میوعی...</div>
-            <div class="sub-text" id="subText">لطفاً منتظر بمانید</div>
+    <div class="main-wrapper">
+        <!-- iframe برای نمایش سایت -->
+        <div class="iframe-container" id="iframeContainer">
+            <iframe 
+                id="mainFrame"
+                src="https://games.skyarea.ir" 
+                sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-orientation-lock"
+                allow="accelerometer; camera; encrypted-media; geolocation; gyroscope; microphone; autoplay; fullscreen"
+                loading="eager"
+            ></iframe>
         </div>
 
-        <!-- بخش آفلاین (مخفی در ابتدا) -->
-        <div id="offlineWrapper" class="hidden" style="display: none; flex-direction: column; align-items: center; width: 100%;">
-            <span class="offline-icon">📡</span>
-            <div class="offline-title">اتصال برقرار نیست</div>
-            <div class="offline-desc">لطفاً اینترنت خودتون رو بررسی کنید</div>
-            <button class="retry-btn" id="retryBtn">تلاش مجدد</button>
+        <!-- لودر وسط صفحه -->
+        <div class="loader-overlay" id="loaderOverlay">
+            <div id="spinnerWrapper">
+                <div class="spinner"></div>
+                <div class="status-text" id="statusText">بارگذاری میوعی...</div>
+                <div class="sub-text" id="subText">لطفاً منتظر بمانید</div>
+            </div>
+
+            <div id="offlineWrapper" class="hidden" style="display: none; flex-direction: column; align-items: center; width: 100%;">
+                <span class="offline-icon">📡</span>
+                <div class="offline-title">اتصال برقرار نیست</div>
+                <div class="offline-desc">لطفاً اینترنت خودتون رو بررسی کنید</div>
+                <button class="retry-btn" id="retryBtn">تلاش مجدد</button>
+            </div>
         </div>
     </div>
 
     <script>
         (function() {
-            "use strict";
-
-            // عناصر DOM
-            const loaderContainer = document.getElementById('loaderContainer');
-            const iframeWrapper = document.getElementById('iframeWrapper');
+            const loaderOverlay = document.getElementById('loaderOverlay');
+            const iframeContainer = document.getElementById('iframeContainer');
             const spinnerWrapper = document.getElementById('spinnerWrapper');
             const offlineWrapper = document.getElementById('offlineWrapper');
             const statusText = document.getElementById('statusText');
@@ -188,202 +184,130 @@
             const retryBtn = document.getElementById('retryBtn');
             const mainFrame = document.getElementById('mainFrame');
 
-            // تابع برای نمایش حالت آفلاین
+            const TARGET_URL = 'https://games.skyarea.ir';
+
             function showOffline() {
-                // پنهان کردن اسپینر و نمایش آیکون آفلاین
                 spinnerWrapper.classList.add('hidden');
                 spinnerWrapper.style.display = 'none';
                 offlineWrapper.classList.remove('hidden');
                 offlineWrapper.style.display = 'flex';
-                // اطمینان از اینکه کانتینر لودر دیده میشه و iframe مخفی
-                loaderContainer.classList.remove('hide-loader');
-                iframeWrapper.classList.remove('active');
-                iframeWrapper.style.display = 'none';
-                // همچنین تغییرات متنی (اختیاری)
                 statusText.textContent = 'عدم دسترسی';
                 subText.textContent = 'اتصال اینترنت را بررسی کنید';
             }
 
-            // تابع برای نمایش حالت بارگذاری (اسپینر)
             function showLoading() {
                 spinnerWrapper.classList.remove('hidden');
                 spinnerWrapper.style.display = 'block';
                 offlineWrapper.classList.add('hidden');
                 offlineWrapper.style.display = 'none';
-                loaderContainer.classList.remove('hide-loader');
-                iframeWrapper.classList.remove('active');
-                iframeWrapper.style.display = 'none';
                 statusText.textContent = 'بارگذاری میوعی...';
                 subText.textContent = 'لطفاً منتظر بمانید';
+                loaderOverlay.classList.remove('hidden');
+                iframeContainer.classList.remove('active');
             }
 
-            // تابع برای نمایش محتوای صفحه (موفقیت)
             function showContent() {
-                // مخفی کردن کامل لودر و نمایش iframe
-                loaderContainer.classList.add('hide-loader');
-                loaderContainer.style.display = 'none';
-                iframeWrapper.classList.add('active');
-                iframeWrapper.style.display = 'block';
-                // اطمینان از اینکه آفلاین هم مخفی باشه
-                offlineWrapper.classList.add('hidden');
-                offlineWrapper.style.display = 'none';
-                spinnerWrapper.classList.add('hidden');
-                spinnerWrapper.style.display = 'none';
+                loaderOverlay.classList.add('hidden');
+                iframeContainer.classList.add('active');
+                mainFrame.src = TARGET_URL;
             }
 
-            // تابع چک اینترنت با fallback
-            function checkInternetAndLoad() {
-                // ابتدا حالت بارگذاری رو نشون بده
-                showLoading();
+            function checkInternetWithImage() {
+                return new Promise((resolve) => {
+                    const img = new Image();
+                    const timeout = setTimeout(() => {
+                        img.src = '';
+                        resolve(false);
+                    }, 5000);
 
-                // با استفاده از fetch با timeout و no-cache برای چک واقعی
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 7000); // 7 ثانیه تایم‌اوت
-
-                fetch('https://app.games.skyarea.ir/favicon.ico', {
-                    method: 'HEAD',
-                    mode: 'no-cors',        // برای جلوگیری از CORS error (ولی همچنان میتونیم وضعیت رو بفهمیم)
-                    cache: 'no-store',
-                    signal: controller.signal
-                })
-                .then(response => {
-                    clearTimeout(timeoutId);
-                    // اگر به اینجا رسیدیم یعنی درخواست حداقل پاسخ داده (حتی با no-cors)
-                    // ولی برای اطمینان بیشتر، یک fetch دیگه به یه منبع مطمئن‌تر؟ ولی خوبه
-                    // چون no-cors هست، وضعیت رو نمیتونیم بخونیم ولی خود fetch موفق یعنی شبکه کار میکنه.
-                    // پس صفحه رو لود کن.
-                    console.log('Internet OK (no-cors)');
-                    // بارگذاری محتوای اصلی
-                    showContent();
-                    // بارگذاری مجدد iframe (برای اطمینان از رفرش)
-                    mainFrame.src = 'https://app.games.skyarea.ir';
-                })
-                .catch(error => {
-                    clearTimeout(timeoutId);
-                    // اگر ارور خورد، یعنی یا قطع اینترنت یا تایم‌اوت
-                    console.warn('Internet check failed:', error);
-                    showOffline();
+                    img.onload = function() {
+                        clearTimeout(timeout);
+                        resolve(true);
+                    };
+                    img.onerror = function() {
+                        clearTimeout(timeout);
+                        resolve(false);
+                    };
+                    img.src = 'https://www.google.com/favicon.ico?_=' + Date.now();
                 });
             }
 
-            // تابع دکمه تلاش مجدد
-            function retryConnection() {
-                checkInternetAndLoad();
+            async function checkInternet() {
+                if (!navigator.onLine) {
+                    return false;
+                }
+                const result = await checkInternetWithImage();
+                return result;
             }
 
-            // ========== رویدادها ==========
-            // بارگذاری اولیه
-            window.addEventListener('load', function() {
-                // ابتدا حالت بارگذاری رو نشون بده
+            let isChecking = false;
+
+            async function checkInternetAndLoad() {
+                if (isChecking) return;
+                isChecking = true;
+
                 showLoading();
-                // چک اینترنت و لود محتوا
-                checkInternetAndLoad();
+                
+                const hasInternet = await checkInternet();
+                
+                if (hasInternet) {
+                    console.log('✅ اینترنت متصل است - بارگذاری صفحه');
+                    showContent();
+                } else {
+                    console.log('❌ اینترنت قطع است');
+                    showOffline();
+                }
+                
+                isChecking = false;
+            }
+
+            async function retryConnection() {
+                if (isChecking) return;
+                showLoading();
+                
+                const hasInternet = await checkInternet();
+                
+                if (hasInternet) {
+                    showContent();
+                } else {
+                    showOffline();
+                }
+            }
+
+            window.addEventListener('load', function() {
+                setTimeout(checkInternetAndLoad, 300);
             });
 
-            // دکمه تلاش مجدد
             retryBtn.addEventListener('click', retryConnection);
 
-            // همچنین اگر کاربر روی صفحه کلیک کرد یا هر رویداد دیگه‌ای، 
-            // اما نیازی نیست.
-
-            // پایش تغییر وضعیت آنلاین/آفلاین مرورگر (مفید برای تشخیص سریع)
             window.addEventListener('online', function() {
-                // اگر کاربر آنلاین شد و در حالت آفلاین هستیم، دوباره تلاش کن
-                if (!offlineWrapper.classList.contains('hidden')) {
+                if (!loaderOverlay.classList.contains('hidden')) {
                     checkInternetAndLoad();
+                } else {
+                    checkInternet().then(result => {
+                        if (!result) {
+                            loaderOverlay.classList.remove('hidden');
+                            iframeContainer.classList.remove('active');
+                            showOffline();
+                        }
+                    });
                 }
             });
 
             window.addEventListener('offline', function() {
-                // اگر آفلاین شد و محتوا نمایش داده شده بود، برگرد به حالت آفلاین
-                if (!loaderContainer.classList.contains('hide-loader')) {
-                    // اگه لودر پنهان نباشه یعنی ممکنه محتوا نشون داده شده باشه،
-                    // ولی بهتره چک کنیم که اگر iframe فعاله و نت قطع شد، آفلاین رو نشون بدیم؟
-                    // اما اگه کاربر داخل صفحه باشه و نت قطع شه، اگه لودر مخفیه و iframe فعاله،
-                    // ما نمیخوایم صفحه رو بپوشونیم؟ شاید بهتر باشه فقط نوتیفیکیشن بدیم ولی 
-                    // برای سادگی، اگر قطع اینترنت اتفاق افتاد و iframe فعاله، ما آفلاین رو نمایش میدیم.
-                    // ولی برای جلوگیری از پرش ناگهانی، چک میکنیم که آیا iframe فعال هست؟
-                    if (iframeWrapper.classList.contains('active')) {
-                        // مخفی کردن iframe و نمایش آفلاین
-                        iframeWrapper.classList.remove('active');
-                        iframeWrapper.style.display = 'none';
-                        loaderContainer.classList.remove('hide-loader');
-                        loaderContainer.style.display = 'flex';
-                        showOffline();
-                    }
-                } else {
-                    // اگر لودر مخفی بود (یعنی محتوا نمایش داده شده) ولی اینترنت قطع شد، 
-                    // ما آفلاین رو نشون میدیم.
-                    if (iframeWrapper.classList.contains('active')) {
-                        iframeWrapper.classList.remove('active');
-                        iframeWrapper.style.display = 'none';
-                        loaderContainer.classList.remove('hide-loader');
-                        loaderContainer.style.display = 'flex';
-                        showOffline();
-                    }
+                if (iframeContainer.classList.contains('active')) {
+                    loaderOverlay.classList.remove('hidden');
+                    iframeContainer.classList.remove('active');
+                    showOffline();
                 }
             });
 
-            // ====== بهبود: در صورت خطای iframe (مثلاً محتوا لود نشد) ======
-            // اگر iframe نتونه لود کنه (مثلاً DNS error) ما از طریق event نمیتونیم تشخیص بدیم،
-            // ولی یک تایمر fail-safe میزاریم که اگر بعد از 12 ثانیه هنوز محتوایی نشون داده نشد، 
-            // دوباره چک کنه.
-            let loadTimer = null;
-            function startFailSafeTimer() {
-                if (loadTimer) clearTimeout(loadTimer);
-                loadTimer = setTimeout(() => {
-                    // اگر still در حالت بارگذاری هستیم (یعنی نه آفلاین و نه محتوا)
-                    if (!loaderContainer.classList.contains('hide-loader') && 
-                        offlineWrapper.classList.contains('hidden')) {
-                        // یعنی لودر هنوز فعاله ولی محتوا نمایش داده نشده → احتمالا اینترنت قطع یا مشکل
-                        console.warn('Fail-safe: content not loaded, rechecking internet...');
-                        checkInternetAndLoad();
-                    }
-                }, 10000); // 10 ثانیه
-            }
-
-            // اوراق کردن متد checkInternetAndLoad برای ریست تایمر
-            const originalCheck = checkInternetAndLoad;
-            checkInternetAndLoad = function() {
-                if (loadTimer) clearTimeout(loadTimer);
-                originalCheck();
-                startFailSafeTimer();
-            };
-
-            // برای نمایش محتوا هم تایمر رو کنسل کن
-            const originalShowContent = showContent;
-            showContent = function() {
-                if (loadTimer) clearTimeout(loadTimer);
-                originalShowContent();
-            };
-
-            // برای آفلاین هم تایمر کنسل
-            const originalShowOffline = showOffline;
-            showOffline = function() {
-                if (loadTimer) clearTimeout(loadTimer);
-                originalShowOffline();
-            };
-
-            // ری绑定 توابع
-            window.checkInternetAndLoad = checkInternetAndLoad;
-            window.showContent = showContent;
-            window.showOffline = showOffline;
-            window.retryConnection = retryConnection;
-
-            // اعمال مجدد برای بارگذاری اولیه
-            // ولی چون قبلاً event listener اضافه شده، نیاز به ری‌کال نداریم.
-            // فقط برای اطمینان، تابع رو override کردیم ولی رویداد load از قبل استفاده میکنه از 
-            // reference قدیمی؟ نه، چون تابع رو بازنویسی کردیم و رویداد از closure استفاده میکنه 
-            // و متغیر checkInternetAndLoad آپدیت شده. ولی برای اطمینان بیشتر، 
-            // رویداد load رو دوباره با تابع جدید جایگزین میکنیم؟ 
-            // بهتره یک بار دیگه listener رو اضافه نکنیم، ولی با این کار تداخل ایجاد میشه.
-            // راه حل: تابع رو درون یک IIFE قرار دادیم و همه چیز رو با هماهنگی انجام میدیم.
-            // پس فقط کافیه که تابع رو دوباره صدا بزنیم اگر نیاز بود.
-            // اما از اونجایی که قبلاً listener اضافه شده، کافیه که متغیر رو آپدیت کنیم.
-            // پس دوباره تعریف میکنیم.
-
-            // همچنین برای اطمینان از اینکه اگر صفحه لود شد، دوباره چک کنه (در صورت خطا)
-            // این بخش در رویداد load موجود هست.
+            mainFrame.addEventListener('error', function() {
+                console.warn('⚠️ iframe error');
+                if (!loaderOverlay.classList.contains('hidden')) {
+                    checkInternetAndLoad();
+                }
+            });
 
         })();
     </script>
