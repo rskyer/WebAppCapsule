@@ -4,7 +4,6 @@ import android.annotation.SuppressLint
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
-import android.content.SharedPreferences
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
@@ -29,10 +28,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import androidx.webkit.ServiceWorkerClientCompat
-import androidx.webkit.ServiceWorkerControllerCompat
 import androidx.webkit.WebViewAssetLoader
-import androidx.webkit.WebViewFeature
 import monster.kawa.webappcapsule.databinding.ActivityMainBinding
 import java.io.File
 import java.io.FileOutputStream
@@ -45,31 +41,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
     private lateinit var fileChooserLauncher: ActivityResultLauncher<Intent>
-    private lateinit var prefs: SharedPreferences
-
-    // ---- Auto-import config ----
-    // Folder name that is reported to the loader as the "picked" root folder.
-    // The loader only cares that a "www/" segment shows up somewhere in the
-    // relative path, so the exact name here doesn't matter.
-    private val GAME_ROOT_LABEL = "Game"
-    private val PREFS_NAME = "webappcapsule_prefs"
-    private val KEY_IMPORTED = "game_imported"
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
-
-        prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-
-        // Remote debugging: connect the phone via USB, enable USB debugging
-        // in Developer Options, then open chrome://inspect on a PC with
-        // Chrome. This app's WebView will show up there with a real
-        // Console + Network tab - the only reliable way to see what's
-        // actually happening with sw.js registration and script loads
-        // inside THIS app (as opposed to some other local server/tab).
-        WebView.setWebContentsDebuggingEnabled(true)
 
         fileChooserLauncher = registerForActivityResult(
             ActivityResultContracts.StartActivityForResult()
@@ -108,44 +85,6 @@ class MainActivity : AppCompatActivity() {
             .setDomain("appassets.androidplatform.net")
             .addPathHandler("/", WebViewAssetLoader.AssetsPathHandler(this))
             .build()
-
-        // CRITICAL: requests made by the Service Worker itself (fetching
-        // sw.js to register/update it, and any fetch() inside the SW's own
-        // fetch handler) do NOT go through WebViewClient.shouldInterceptRequest.
-        // They go through a separate pipe. Without wiring the same
-        // assetLoader in here too, sw.js registration fails with a generic
-        // "unknown error occurred when fetching the script" - which is
-        // exactly what was happening. This is what actually fixes it.
-        if (WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_BASIC_USAGE) &&
-            WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_SHOULD_INTERCEPT_REQUEST)
-        ) {
-            val swController = ServiceWorkerControllerCompat.getInstance()
-            swController.setServiceWorkerClient(object : ServiceWorkerClientCompat() {
-                override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse? {
-                    return if (request.url.host == "appassets.androidplatform.net") {
-                        assetLoader.shouldInterceptRequest(request.url)
-                    } else {
-                        null
-                    }
-                }
-            })
-        } else {
-            Toast.makeText(
-                this,
-                "این نسخه‌ی WebView از Service Worker پشتیبانی کامل نمی‌کنه؛ ممکنه بازی بالا نیاد",
-                Toast.LENGTH_LONG
-            ).show()
-        }
-
-        // First run (or if a previous import never finished): start at
-        // loader.html so the auto-import script can run. Once the game is
-        // confirmed imported, jump straight to index.html forever after.
-        val alreadyImported = prefs.getBoolean(KEY_IMPORTED, false)
-        val startUrl = if (alreadyImported) {
-            "https://appassets.androidplatform.net/index.html"
-        } else {
-            "https://appassets.androidplatform.net/loader.html"
-        }
 
         binding.webView.apply {
             settings.apply {
@@ -209,12 +148,6 @@ class MainActivity : AppCompatActivity() {
 
                 override fun onPageFinished(view: WebView, url: String) {
                     view.requestFocus()
-
-                    // Only auto-import from loader.html, and only if we
-                    // haven't already imported successfully before.
-                    if (!prefs.getBoolean(KEY_IMPORTED, false) && url.contains("loader.html")) {
-                        view.evaluateJavascript(buildAutoImportScript(), null)
-                    }
                 }
             }
 
@@ -278,156 +211,10 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                 }
-
-                // Called from the injected auto-import script once storeFiles()
-                // has actually completed (not just "started"), right before it
-                // clicks the Play button. Persists the flag so every future
-                // launch skips loader.html and goes straight to index.html.
-                @android.webkit.JavascriptInterface
-                fun markImported() {
-                    runOnUiThread {
-                        prefs.edit().putBoolean(KEY_IMPORTED, true).apply()
-                    }
-                }
-
-                // Optional: surface import failures as a Toast instead of
-                // failing silently if something in the page changed.
-                @android.webkit.JavascriptInterface
-                fun reportImportError(message: String) {
-                    runOnUiThread {
-                        Toast.makeText(this@MainActivity, "خطا در ایمپورت خودکار بازی: $message", Toast.LENGTH_LONG).show()
-                    }
-                }
             }, "Android")
 
-            loadUrl(startUrl)
+            loadUrl("https://appassets.androidplatform.net/index.html")
         }
-    }
-
-    /**
-     * Builds the JS that runs once loader.html finishes loading. It:
-     *  1. Fetches assets/gamefiles-manifest.json (list of relative paths under www/).
-     *  2. Fetches each file's bytes from assets/gamefiles/<path> (served via the
-     *     existing WebViewAssetLoader, so this is a normal same-origin fetch()).
-     *  3. Wraps them as File objects with a faked webkitRelativePath, exactly
-     *     what the folder-picker's own onFileInputChange() handler expects.
-     *  4. Assigns them to #file-input and dispatches a real "change" event,
-     *     which runs the loader's unmodified import pipeline (storeFiles()),
-     *     including its own required-files validation.
-     *  5. Waits for #btn-play to appear (import succeeded) and clicks it,
-     *     which is the same as the user pressing Play themselves.
-     *
-     * If the game's own www/ root already contains "www" as its first path
-     * segment inside the manifest, GAME_ROOT_LABEL is irrelevant; the loader's
-     * normalizeFolderPath() only strips the FIRST path segment then an
-     * optional leading "www/", so prefixing every path with "Game/www/" is
-     * always safe regardless of how gamefiles/ is laid out.
-     */
-    private fun buildAutoImportScript(): String {
-        return """
-        (function() {
-          if (window.__autoImportStarted) return;
-          window.__autoImportStarted = true;
-
-          function fail(msg) {
-            try { Android.reportImportError(String(msg)); } catch (e) {}
-          }
-
-          function ss(key) {
-            try { return sessionStorage.getItem(key); } catch (e) { return null; }
-          }
-          function ssSet(key, val) {
-            try { sessionStorage.setItem(key, val); } catch (e) {}
-          }
-          function ssRemove(key) {
-            try { sessionStorage.removeItem(key); } catch (e) {}
-          }
-
-          // Waits for the Play button to appear AND the Service Worker to
-          // actually be controlling this page before clicking it. If the
-          // button shows up before the SW has taken control (a real race:
-          // storeFiles() can finish and reveal #btn-play before the SW's
-          // controllerchange fires), clicking immediately leads straight to
-          // index.html trying to load js/*.js with no SW to serve them from
-          // IndexedDB -> "Failed to load script" boot crash.
-          //
-          // Fix: if we see the button but no controller yet, reload once
-          // (same recovery pattern the loader itself uses elsewhere) and
-          // keep waiting after the reload lands. Guarded by sessionStorage
-          // so we never reload more than once per import attempt.
-          function waitAndClickPlay() {
-            var reloadedForControl = ss('twal_reload_for_control') === '1';
-            var tries = 0;
-            var maxTries = 1200; // ~10 minutes at 500ms, generous for big installs
-            var poll = setInterval(function() {
-              tries++;
-              var playBtn = document.getElementById('btn-play');
-              var visible = playBtn && playBtn.offsetParent !== null;
-              var controlled = !!(navigator.serviceWorker && navigator.serviceWorker.controller);
-
-              if (visible && controlled) {
-                clearInterval(poll);
-                ssRemove('twal_reload_for_control');
-                ssRemove('twal_import_started');
-                try { Android.markImported(); } catch (e) {}
-                playBtn.click();
-              } else if (visible && !controlled && !reloadedForControl) {
-                clearInterval(poll);
-                ssSet('twal_reload_for_control', '1');
-                location.reload();
-              } else if (tries >= maxTries) {
-                clearInterval(poll);
-                fail('timed out waiting for import / service worker control');
-              }
-            }, 500);
-          }
-
-          async function run() {
-            try {
-              // If we already dispatched the import on a previous load of
-              // this same page (before a self-reload for SW control),
-              // don't redo the fetch/File/dispatch dance - just resume
-              // waiting for Play + control.
-              if (ss('twal_import_started') === '1') {
-                waitAndClickPlay();
-                return;
-              }
-              ssSet('twal_import_started', '1');
-
-              var manifestResp = await fetch('gamefiles-manifest.json', { cache: 'no-store' });
-              if (!manifestResp.ok) throw new Error('manifest fetch failed: ' + manifestResp.status);
-              var paths = await manifestResp.json();
-              if (!Array.isArray(paths) || paths.length === 0) throw new Error('empty manifest');
-
-              var dt = new DataTransfer();
-              for (var i = 0; i < paths.length; i++) {
-                var relPath = paths[i];
-                var resp = await fetch('gamefiles/' + relPath, { cache: 'no-store' });
-                if (!resp.ok) throw new Error('fetch failed for ' + relPath + ': ' + resp.status);
-                var blob = await resp.blob();
-                var name = relPath.split('/').pop();
-                var file = new File([blob], name, { type: blob.type || 'application/octet-stream' });
-                Object.defineProperty(file, 'webkitRelativePath', {
-                  value: '$GAME_ROOT_LABEL/www/' + relPath,
-                  configurable: true
-                });
-                dt.items.add(file);
-              }
-
-              var input = document.getElementById('file-input');
-              if (!input) throw new Error('#file-input not found on page');
-              input.files = dt.files;
-              input.dispatchEvent(new Event('change', { bubbles: true }));
-
-              waitAndClickPlay();
-            } catch (err) {
-              fail(err && err.message ? err.message : String(err));
-            }
-          }
-
-          run();
-        })();
-        """.trimIndent()
     }
 
     /**
